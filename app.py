@@ -6,6 +6,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+
+# ---------------------------------------------------------
+# Page setup
+# ---------------------------------------------------------
 st.set_page_config(
     page_title="Corruption and Inflation Dashboard",
     page_icon="📊",
@@ -14,40 +18,57 @@ st.set_page_config(
 
 st.title("Corruption and Inflation Dashboard")
 st.caption(
-    "Interactive country-year analysis. Higher Control of Corruption scores "
-    "mean stronger control of corruption."
+    "Interactive country-year analysis using World Bank inflation and "
+    "Control of Corruption data. Higher corruption-control scores mean "
+    "stronger control of corruption."
 )
 
 APP_DIR = Path(__file__).resolve().parent
 DATA_PATH = APP_DIR / "outputs" / "analysis_ready_corruption_inflation.csv"
 
 
+# ---------------------------------------------------------
+# Load data
+# ---------------------------------------------------------
 @st.cache_data
 def load_data(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(
-            f"Could not find {path}. Run the notebook export cell first."
+            f"Could not find {path}. Make sure the CSV is inside the "
+            "outputs folder."
         )
 
     data = pd.read_csv(path)
 
-    required = {
-        "country_name", "country_code", "year", "inflation",
-        "inflation_log", "region", "income_level", "corruption_score"
+    required_columns = {
+        "country_name",
+        "country_code",
+        "year",
+        "inflation",
+        "inflation_log",
+        "region",
+        "income_level",
+        "corruption_score",
     }
-    missing = required.difference(data.columns)
-    if missing:
+
+    missing_columns = required_columns.difference(data.columns)
+    if missing_columns:
         raise ValueError(
-            "Missing required columns: " + ", ".join(sorted(missing))
+            "The dashboard CSV is missing: "
+            + ", ".join(sorted(missing_columns))
         )
 
     numeric_columns = [
-        "year", "inflation", "inflation_log", "corruption_score"
+        "year",
+        "inflation",
+        "inflation_log",
+        "corruption_score",
     ]
+
     for column in numeric_columns:
         data[column] = pd.to_numeric(data[column], errors="coerce")
 
-    data = data.dropna(subset=list(required)).copy()
+    data = data.dropna(subset=list(required_columns)).copy()
     data["year"] = data["year"].astype(int)
 
     group_order = [
@@ -78,26 +99,30 @@ except (FileNotFoundError, ValueError) as error:
     st.error(str(error))
     st.stop()
 
+
+# ---------------------------------------------------------
+# Sidebar filters
+# ---------------------------------------------------------
 st.sidebar.header("Filters")
 
-min_year = int(df["year"].min())
-max_year = int(df["year"].max())
+minimum_year = int(df["year"].min())
+maximum_year = int(df["year"].max())
 
 selected_years = st.sidebar.slider(
     "Year range",
-    min_year,
-    max_year,
-    (min_year, max_year),
+    minimum_year,
+    maximum_year,
+    (minimum_year, maximum_year),
 )
 
-region_options = sorted(df["region"].unique())
+region_options = sorted(df["region"].dropna().unique())
 selected_regions = st.sidebar.multiselect(
     "Region",
     region_options,
     default=region_options,
 )
 
-income_options = sorted(df["income_level"].unique())
+income_options = sorted(df["income_level"].dropna().unique())
 selected_income_levels = st.sidebar.multiselect(
     "Income level",
     income_options,
@@ -109,7 +134,7 @@ country_options = sorted(
         df["region"].isin(selected_regions)
         & df["income_level"].isin(selected_income_levels),
         "country_name",
-    ].unique()
+    ].dropna().unique()
 )
 
 selected_countries = st.sidebar.multiselect(
@@ -120,7 +145,7 @@ selected_countries = st.sidebar.multiselect(
 )
 
 inflation_display = st.sidebar.radio(
-    "Inflation scale",
+    "Inflation scale for scatter plot",
     ["Signed logarithm", "Original percentage"],
 )
 
@@ -139,6 +164,10 @@ if filtered_df.empty:
     st.warning("No observations match the selected filters.")
     st.stop()
 
+
+# ---------------------------------------------------------
+# Summary metrics
+# ---------------------------------------------------------
 spearman = filtered_df["corruption_score"].corr(
     filtered_df["inflation"],
     method="spearman",
@@ -154,7 +183,16 @@ m4.metric(
 )
 
 st.markdown("---")
-st.subheader("1. Corruption control and inflation")
+
+
+# ---------------------------------------------------------
+# Question 1
+# ---------------------------------------------------------
+st.header("Question 1: Is stronger corruption control associated with lower inflation?")
+st.write(
+    "This scatter plot compares the Control of Corruption score with inflation. "
+    "The line shows the general direction of the relationship."
+)
 
 if inflation_display == "Signed logarithm":
     y_column = "inflation_log"
@@ -187,7 +225,7 @@ scatter = px.scatter(
         "region": "Region",
         "income_level": "Income level",
     },
-    title="Relationship between control of corruption and inflation",
+    title="Control of corruption and inflation",
 )
 
 line_data = filtered_df[
@@ -200,11 +238,13 @@ if len(line_data) >= 2 and line_data["corruption_score"].nunique() >= 2:
         line_data[y_column],
         1,
     )
+
     line_x = np.linspace(
         line_data["corruption_score"].min(),
         line_data["corruption_score"].max(),
         100,
     )
+
     scatter.add_trace(
         go.Scatter(
             x=line_x,
@@ -216,12 +256,33 @@ if len(line_data) >= 2 and line_data["corruption_score"].nunique() >= 2:
     )
 
 st.plotly_chart(scatter, use_container_width=True)
-st.info(
-    "A negative correlation means stronger corruption control tends to be "
-    "associated with lower inflation. This does not prove causation."
-)
 
-st.subheader("2. Median inflation by corruption-control group")
+if pd.isna(spearman):
+    st.info("Not enough variation is available to calculate the correlation.")
+elif spearman < 0:
+    st.success(
+        f"Answer: The filtered data show a negative association "
+        f"(Spearman correlation = {spearman:.3f}). Stronger corruption "
+        "control tends to be associated with lower inflation."
+    )
+else:
+    st.info(
+        f"Answer: The filtered data do not show a negative association "
+        f"(Spearman correlation = {spearman:.3f})."
+    )
+
+st.caption("The result is descriptive and does not prove causation.")
+st.markdown("---")
+
+
+# ---------------------------------------------------------
+# Question 2
+# ---------------------------------------------------------
+st.header("Question 2: How does median inflation differ across corruption-control groups?")
+st.write(
+    "The observations are divided into four corruption-control groups. "
+    "Median inflation is used because it is less affected by hyperinflation."
+)
 
 group_order = [
     "Very weak control",
@@ -260,23 +321,112 @@ group_chart = px.bar(
         "observations": "Observations",
         "countries": "Countries",
     },
-    title="Median inflation across levels of corruption control",
+    title="Median inflation by corruption-control group",
 )
+
 group_chart.update_layout(showlegend=False)
 st.plotly_chart(group_chart, use_container_width=True)
 
-left, right = st.columns(2)
+if not group_summary.empty:
+    highest_group = group_summary.loc[
+        group_summary["median_inflation"].idxmax()
+    ]
+    lowest_group = group_summary.loc[
+        group_summary["median_inflation"].idxmin()
+    ]
 
-with left:
-    st.subheader("3. Correlation by region")
+    st.success(
+        f"Answer: The highest median inflation is in the "
+        f"{highest_group['corruption_control_group']} group "
+        f"({highest_group['median_inflation']:.2f}%), while the lowest is in "
+        f"the {lowest_group['corruption_control_group']} group "
+        f"({lowest_group['median_inflation']:.2f}%)."
+    )
 
-    regional = pd.DataFrame(
+st.markdown("---")
+
+
+# ---------------------------------------------------------
+# Question 3 — Q11 box plot
+# ---------------------------------------------------------
+st.header("Question 3: How does the full inflation distribution differ across corruption-control groups?")
+st.write(
+    "The box plot compares the median, middle 50%, overall spread, and "
+    "outliers. Signed-log inflation is used so that hyperinflation episodes "
+    "do not make the boxes unreadable."
+)
+
+box_chart = px.box(
+    filtered_df,
+    x="corruption_control_group",
+    y="inflation_log",
+    color="corruption_control_group",
+    category_orders={"corruption_control_group": group_order},
+    points="outliers",
+    hover_name="country_name",
+    hover_data={
+        "year": True,
+        "inflation": ":.2f",
+        "corruption_score": ":.2f",
+        "corruption_control_group": False,
+    },
+    title="Inflation distribution by corruption-control group",
+    labels={
+        "corruption_control_group": "Corruption-control group",
+        "inflation_log": "Signed logarithm of inflation",
+        "year": "Year",
+        "inflation": "Inflation rate (%)",
+        "corruption_score": "Control of corruption score",
+    },
+)
+
+box_chart.update_layout(
+    showlegend=False,
+    xaxis_title=None,
+)
+
+st.plotly_chart(box_chart, use_container_width=True)
+
+box_medians = (
+    filtered_df.groupby(
+        "corruption_control_group",
+        observed=True,
+    )["inflation"]
+    .median()
+    .sort_values(ascending=False)
+)
+
+if not box_medians.empty:
+    st.success(
+        f"Answer: The group with the highest median inflation is "
+        f"{box_medians.index[0]} ({box_medians.iloc[0]:.2f}%). "
+        f"The group with the lowest median inflation is "
+        f"{box_medians.index[-1]} ({box_medians.iloc[-1]:.2f}%). "
+        "The amount of overlap shows that corruption control alone does not "
+        "determine inflation."
+    )
+
+st.markdown("---")
+
+
+# ---------------------------------------------------------
+# Questions 4 and 5
+# ---------------------------------------------------------
+left_column, right_column = st.columns(2)
+
+with left_column:
+    st.header("Question 4: Does the relationship differ by region?")
+    st.write(
+        "A separate Spearman correlation is calculated for each selected region."
+    )
+
+    regional_correlations = pd.DataFrame(
         [
             {
                 "region": region,
-                "spearman_correlation": group["corruption_score"].corr(
-                    group["inflation"], method="spearman"
-                ),
+                "spearman_correlation": group[
+                    "corruption_score"
+                ].corr(group["inflation"], method="spearman"),
                 "observations": len(group),
                 "countries": group["country_code"].nunique(),
             }
@@ -285,12 +435,15 @@ with left:
         ]
     )
 
-    if regional.empty:
+    if regional_correlations.empty:
         st.warning("Not enough observations for regional correlations.")
     else:
-        regional = regional.sort_values("spearman_correlation")
+        regional_correlations = regional_correlations.dropna(
+            subset=["spearman_correlation"]
+        ).sort_values("spearman_correlation")
+
         regional_chart = px.bar(
-            regional,
+            regional_correlations,
             x="spearman_correlation",
             y="region",
             orientation="h",
@@ -299,9 +452,12 @@ with left:
             labels={
                 "spearman_correlation": "Spearman correlation",
                 "region": "Region",
+                "observations": "Observations",
+                "countries": "Countries",
             },
-            title="Regional association",
+            title="Regional corruption–inflation association",
         )
+
         regional_chart.add_vline(
             x=0,
             line_dash="dash",
@@ -310,16 +466,36 @@ with left:
         regional_chart.update_layout(yaxis_title=None)
         st.plotly_chart(regional_chart, use_container_width=True)
 
-with right:
-    st.subheader("4. Correlation over time")
+        if not regional_correlations.empty:
+            strongest_region = regional_correlations.iloc[0]
+            weakest_region = regional_correlations.iloc[
+                regional_correlations[
+                    "spearman_correlation"
+                ].abs().argmin()
+            ]
 
-    yearly = pd.DataFrame(
+            st.success(
+                f"Answer: The strongest negative association is in "
+                f"{strongest_region['region']} "
+                f"({strongest_region['spearman_correlation']:.3f}). "
+                f"The relationship closest to zero is in "
+                f"{weakest_region['region']} "
+                f"({weakest_region['spearman_correlation']:.3f})."
+            )
+
+with right_column:
+    st.header("Question 5: Has the relationship changed over time?")
+    st.write(
+        "A separate Spearman correlation is calculated for each selected year."
+    )
+
+    yearly_correlations = pd.DataFrame(
         [
             {
                 "year": year,
-                "spearman_correlation": group["corruption_score"].corr(
-                    group["inflation"], method="spearman"
-                ),
+                "spearman_correlation": group[
+                    "corruption_score"
+                ].corr(group["inflation"], method="spearman"),
                 "countries": group["country_code"].nunique(),
             }
             for year, group in filtered_df.groupby("year")
@@ -327,12 +503,15 @@ with right:
         ]
     )
 
-    if yearly.empty:
+    if yearly_correlations.empty:
         st.warning("Not enough observations for yearly correlations.")
     else:
-        yearly = yearly.sort_values("year")
+        yearly_correlations = yearly_correlations.dropna(
+            subset=["spearman_correlation"]
+        ).sort_values("year")
+
         yearly_chart = px.line(
-            yearly,
+            yearly_correlations,
             x="year",
             y="spearman_correlation",
             markers=True,
@@ -340,24 +519,61 @@ with right:
             labels={
                 "year": "Year",
                 "spearman_correlation": "Spearman correlation",
+                "countries": "Countries",
             },
-            title="Yearly association",
+            title="Yearly corruption–inflation association",
         )
+
         yearly_chart.add_hline(
             y=0,
             line_dash="dash",
             line_color="black",
         )
+
         st.plotly_chart(yearly_chart, use_container_width=True)
 
-st.subheader("5. Global hierarchy in the latest selected year")
+        if not yearly_correlations.empty:
+            strongest_year = yearly_correlations.loc[
+                yearly_correlations["spearman_correlation"].idxmin()
+            ]
+            weakest_year = yearly_correlations.loc[
+                yearly_correlations["spearman_correlation"].abs().idxmin()
+            ]
 
-latest_year = int(filtered_df["year"].max())
-latest_df = filtered_df[filtered_df["year"] == latest_year].copy()
+            st.success(
+                f"Answer: The strongest negative yearly association occurs in "
+                f"{int(strongest_year['year'])} "
+                f"({strongest_year['spearman_correlation']:.3f}). "
+                f"The relationship closest to zero occurs in "
+                f"{int(weakest_year['year'])} "
+                f"({weakest_year['spearman_correlation']:.3f})."
+            )
 
-hierarchy = (
+st.markdown("---")
+
+
+# ---------------------------------------------------------
+# Question 6
+# ---------------------------------------------------------
+st.header("Question 6: Where is high inflation concentrated in the global hierarchy?")
+st.write(
+    "The treemap groups countries by region, income level, and "
+    "corruption-control group in the latest selected year. Rectangle size "
+    "represents the number of countries, while color represents median inflation."
+)
+
+latest_selected_year = int(filtered_df["year"].max())
+latest_df = filtered_df[
+    filtered_df["year"] == latest_selected_year
+].copy()
+
+hierarchy_data = (
     latest_df.groupby(
-        ["region", "income_level", "corruption_control_group"],
+        [
+            "region",
+            "income_level",
+            "corruption_control_group",
+        ],
         observed=True,
         as_index=False,
     )
@@ -368,12 +584,12 @@ hierarchy = (
     )
 )
 
-hierarchy["corruption_control_group"] = (
-    hierarchy["corruption_control_group"].astype(str)
+hierarchy_data["corruption_control_group"] = (
+    hierarchy_data["corruption_control_group"].astype(str)
 )
 
 treemap = px.treemap(
-    hierarchy,
+    hierarchy_data,
     path=[
         px.Constant("World"),
         "region",
@@ -390,7 +606,7 @@ treemap = px.treemap(
     },
     title=(
         "Inflation by region, income level, and corruption control "
-        f"in {latest_year}"
+        f"in {latest_selected_year}"
     ),
     labels={
         "country_count": "Countries",
@@ -398,11 +614,32 @@ treemap = px.treemap(
         "median_corruption_score": (
             "Median corruption-control score"
         ),
+        "income_level": "Income level",
+        "corruption_control_group": "Corruption-control group",
     },
 )
+
 treemap.update_layout(margin=dict(t=60, l=10, r=10, b=10))
 st.plotly_chart(treemap, use_container_width=True)
 
+if not hierarchy_data.empty:
+    highest_hierarchy_group = hierarchy_data.loc[
+        hierarchy_data["median_inflation"].idxmax()
+    ]
+
+    st.success(
+        f"Answer: In {latest_selected_year}, the highest median inflation "
+        f"among the displayed groups is found in "
+        f"{highest_hierarchy_group['region']} / "
+        f"{highest_hierarchy_group['income_level']} / "
+        f"{highest_hierarchy_group['corruption_control_group']} "
+        f"({highest_hierarchy_group['median_inflation']:.2f}%)."
+    )
+
+
+# ---------------------------------------------------------
+# Data table and download
+# ---------------------------------------------------------
 with st.expander("View and download filtered data"):
     display_columns = [
         "country_name",
@@ -435,5 +672,6 @@ with st.expander("View and download filtered data"):
 st.markdown("---")
 st.caption(
     "Sources: World Bank World Development Indicators and Worldwide "
-    "Governance Indicators. Descriptive association only; no causal claim."
+    "Governance Indicators. Results are descriptive associations and do not "
+    "establish causation."
 )
