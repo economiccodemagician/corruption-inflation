@@ -360,9 +360,9 @@ st.write(
     "Pearson correlation using signed-log inflation."
 )
 st.caption(
-    "This chart follows the selected year range, but it does not use the "
-    "region, income-level, or country filters because it is specifically "
-    "defined using the full G20 country group."
+    "This chart shows correlation between corruption control and inflation in the G20 countries over the years it uses spearman and pearson correlation."
+    ""
+    ""
 )
 
 g20_codes = [
