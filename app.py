@@ -347,63 +347,143 @@ st.markdown("---")
 
 
 # ---------------------------------------------------------
-# Question 3 — Q11 box plot
+# Question 3 — G20 multiple-line chart
 # ---------------------------------------------------------
-st.header("Question 3: How does the full inflation distribution differ across corruption-control groups?")
+st.header(
+    "Question 3: How has the corruption–inflation relationship changed "
+    "among G20 countries?"
+)
 st.write(
-    "The box plot compares the median, middle 50%, overall spread, and "
-    "outliers. Signed-log inflation is used so that hyperinflation episodes "
-    "do not make the boxes unreadable."
+    "For each year, the chart calculates the relationship between inflation "
+    "and corruption control across the available G20 countries. It compares "
+    "Spearman correlation, Pearson correlation using original inflation, and "
+    "Pearson correlation using signed-log inflation."
+)
+st.caption(
+    "This chart follows the selected year range, but it does not use the "
+    "region, income-level, or country filters because it is specifically "
+    "defined using the full G20 country group."
 )
 
-box_chart = px.box(
-    filtered_df,
-    x="corruption_control_group",
-    y="inflation_log",
-    color="corruption_control_group",
-    category_orders={"corruption_control_group": group_order},
-    points="outliers",
-    hover_name="country_name",
-    hover_data={
-        "year": True,
-        "inflation": ":.2f",
-        "corruption_score": ":.2f",
-        "corruption_control_group": False,
-    },
-    title="Inflation distribution by corruption-control group",
-    labels={
-        "corruption_control_group": "Corruption-control group",
-        "inflation_log": "Signed logarithm of inflation",
-        "year": "Year",
-        "inflation": "Inflation rate (%)",
-        "corruption_score": "Control of corruption score",
-    },
+g20_codes = [
+    "ARG", "AUS", "BRA", "CAN", "CHN",
+    "FRA", "DEU", "IND", "IDN", "ITA",
+    "JPN", "KOR", "MEX", "RUS", "SAU",
+    "ZAF", "TUR", "GBR", "USA",
+]
+
+g20_df = df[
+    df["country_code"].isin(g20_codes)
+    & df["year"].between(selected_years[0], selected_years[1])
+].copy()
+
+g20_yearly_correlations = pd.DataFrame(
+    [
+        {
+            "year": year,
+            "Spearman": group["corruption_score"].corr(
+                group["inflation"],
+                method="spearman",
+            ),
+            "Pearson — original inflation": group[
+                "corruption_score"
+            ].corr(
+                group["inflation"],
+                method="pearson",
+            ),
+            "Pearson — signed-log inflation": group[
+                "corruption_score"
+            ].corr(
+                group["inflation_log"],
+                method="pearson",
+            ),
+            "countries": group["country_code"].nunique(),
+        }
+        for year, group in g20_df.groupby("year")
+        if group["country_code"].nunique() >= 15
+    ]
 )
 
-box_chart.update_layout(
-    showlegend=False,
-    xaxis_title=None,
-)
+if g20_yearly_correlations.empty:
+    st.warning(
+        "The selected year range does not contain enough G20 countries "
+        "to calculate reliable yearly correlations."
+    )
+else:
+    g20_correlations_long = g20_yearly_correlations.melt(
+        id_vars=["year", "countries"],
+        value_vars=[
+            "Spearman",
+            "Pearson — original inflation",
+            "Pearson — signed-log inflation",
+        ],
+        var_name="correlation_measure",
+        value_name="correlation",
+    ).dropna(subset=["correlation"])
 
-st.plotly_chart(box_chart, use_container_width=True)
+    g20_chart = px.line(
+        g20_correlations_long,
+        x="year",
+        y="correlation",
+        color="correlation_measure",
+        markers=True,
+        hover_data={
+            "countries": True,
+            "correlation": ":.3f",
+            "correlation_measure": False,
+        },
+        title=(
+            "Yearly corruption–inflation correlations among G20 countries"
+        ),
+        labels={
+            "year": "Year",
+            "correlation": "Correlation coefficient",
+            "correlation_measure": "Correlation measure",
+            "countries": "G20 countries included",
+        },
+    )
 
-box_medians = (
-    filtered_df.groupby(
-        "corruption_control_group",
-        observed=True,
-    )["inflation"]
-    .median()
-    .sort_values(ascending=False)
-)
+    g20_chart.add_hline(
+        y=0,
+        line_dash="dash",
+        line_color="black",
+    )
 
-if not box_medians.empty:
-    st.success(
-        f"Answer: The group with the highest median inflation is "
-        f"{box_medians.index[0]} ({box_medians.iloc[0]:.2f}%). "
-        f"The group with the lowest median inflation is "
-        f"{box_medians.index[-1]} ({box_medians.iloc[-1]:.2f}%). "
-        "The amount of overlap shows that corruption control alone does not "
-        "determine inflation."
+    g20_chart.update_yaxes(range=[-1, 1])
+
+    g20_chart.update_layout(
+        legend_title_text="Correlation measure",
+        hovermode="x unified",
+    )
+
+    st.plotly_chart(g20_chart, use_container_width=True)
+
+    spearman_results = g20_yearly_correlations.dropna(
+        subset=["Spearman"]
+    )
+
+    if not spearman_results.empty:
+        strongest_g20_year = spearman_results.loc[
+            spearman_results["Spearman"].idxmin()
+        ]
+        weakest_g20_year = spearman_results.loc[
+            spearman_results["Spearman"].abs().idxmin()
+        ]
+
+        st.success(
+            f"Answer: The strongest negative G20 Spearman relationship "
+            f"within the selected period occurs in "
+            f"{int(strongest_g20_year['year'])} "
+            f"({strongest_g20_year['Spearman']:.3f}). "
+            f"The relationship closest to zero occurs in "
+            f"{int(weakest_g20_year['year'])} "
+            f"({weakest_g20_year['Spearman']:.3f})."
+        )
+
+    st.caption(
+        "Differences between the Pearson lines show how strongly extreme "
+        "inflation observations affect the measured relationship. The chart "
+        "shows association across G20 countries, not causation."
     )
 
 st.markdown("---")
